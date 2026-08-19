@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "http://192.168.100.236:8000";
 
 type ConnectionState = "loading" | "success" | "error";
 
