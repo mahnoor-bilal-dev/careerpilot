@@ -1,32 +1,27 @@
 """
-CareerPilot Backend — Milestone 1
+CareerPilot Backend — Milestone 4
 
-This is the entrypoint for the FastAPI server. Right now it does one thing:
-expose a /health endpoint so the mobile app has something real to call.
-
-Later milestones will add:
-- /career-profile   (Milestone 3)
-- /resume/analyze    (Milestone 4)
-- /github/analyze    (Milestone 5)
-- /job-match         (Milestone 6)
-- /orchestrate       (Milestone 7)
-- /coach/chat        (Milestone 9)
+Adds POST /analyze-resume, which accepts a PDF upload, extracts its text,
+and runs it through resume_agent. GET /, GET /health, and POST /analyze
+are unchanged from Milestones 1 and 3.
 """
+
 import logging
+
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from agent_runner import run_career_agent
+
+from agent_runner import run_career_agent, run_resume_agent
+from pdf_utils import extract_text_from_pdf
 
 logging.basicConfig(level=logging.INFO)
-logger=logging.getLogger("careerpilot")
+logger = logging.getLogger("careerpilot")
 
-# FastAPI application instance / creates server obj
-# Everything we build (routes, middleware) attaches to this "app" object.
 app = FastAPI(title="CareerPilot API", version="0.1.0")
 
 app.add_middleware(
@@ -36,60 +31,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
-    """Basic root route, useful for a quick sanity check in a browser."""
     return {"message": "CareerPilot API is running"}
+
 
 @app.get("/health")
 def health_check():
-    """
-    The mobile app calls this on the Analysis Loading / Welcome screen
-    later to confirm the backend is reachable before doing anything else.
-    """
     return {"status": "ok", "service": "careerpilot-backend"}
 
+
 class AnalyzeRequest(BaseModel):
-    """Shape of the JSON body the mobile app sends to POST /analyze."""
-    profile: str = Field(
-        ...,
-        description="The user's career profile text to analyze",
-        examples=[
-            "I'm a Computer Science student with experience in "
-            "React Native, JavaScript, Python and Figma."
-        ],
-    )
+    profile: str = Field(..., description="The user's career profile text to analyze.")
+
 
 class AnalyzeResponse(BaseModel):
-    """Shape of the JSON we send back to the mobile app."""
     analysis: str
+
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_career(request: AnalyzeRequest):
-    """
-    Runs the user's career profile through the existing career_agent
-    and returns its analysis.
-    """
     profile = request.profile.strip()
+
     if not profile:
-        raise HTTPException(status_code=400, detail="Profile text is required")
+        raise HTTPException(status_code=400, detail="Profile text cannot be empty.")
 
     try:
         analysis = await run_career_agent(profile)
     except RuntimeError as error:
         logger.error("career_agent returned no response: %s", error)
-        raise HTTPException(
-            status_code=502,
-            detail="The career agent did not return a response. Please try again.",
-        )
-    except Exception as error:
-        # Catches anything from the ADK/Gemini layer: bad API key, rate
-        # limits, network errors, etc. We log the real error for
-        # ourselves but never leak it (or the API key) to the client.
+        raise HTTPException(status_code=502, detail="The career agent did not return a response. Please try again.")
+    except Exception:
         logger.exception("Unexpected error while running career_agent")
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while analyzing your profile. Please try again.",
-        )
+        raise HTTPException(status_code=500, detail="Something went wrong while analyzing your profile. Please try again.")
 
-    return AnalyzeResponse(analysis=analysis)   
+    return AnalyzeResponse(analysis=analysis)
+
+
+class ResumeAnalyzeResponse(BaseModel):
+    analysis: str
+
+
+MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@app.post("/analyze-resume", response_model=ResumeAnalyzeResponse)
+async def analyze_resume(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported. Please upload a PDF resume.")
+
+    pdf_bytes = await file.read()
+
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    if len(pdf_bytes) > MAX_RESUME_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="The uploaded file is too large. Please upload a PDF under 5MB.")
+
+    try:
+        resume_text = extract_text_from_pdf(pdf_bytes)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    try:
+        analysis = await run_resume_agent(resume_text)
+    except RuntimeError as error:
+        logger.error("resume_agent returned no response: %s", error)
+        raise HTTPException(status_code=502, detail="The resume agent did not return a response. Please try again.")
+    except Exception:
+        logger.exception("Unexpected error while running resume_agent")
+        raise HTTPException(status_code=500, detail="Something went wrong while analyzing your resume. Please try again.")
+
+    return ResumeAnalyzeResponse(analysis=analysis)

@@ -1,45 +1,37 @@
 """
-CareerPilot — Agent Runner (Milestone 3)
+CareerPilot — Agent Runner (Milestone 3, extended in Milestone 4)
 
 This wraps the same Runner/SessionService pattern proven in test_agent.py
-into a single reusable async function. FastAPI calls this function instead
-of re-implementing the Runner setup inline inside main.py.
+into reusable async functions. FastAPI calls these functions instead of
+re-implementing the Runner setup inline inside main.py.
 
-Nothing about career_agent.py changes — this file only orchestrates it.
+Milestone 4 adds run_resume_agent alongside the existing run_career_agent,
+sharing one internal helper so the ADK execution logic isn't duplicated.
+Neither career_agent.py nor resume_agent.py change as a result.
 """
 
 import uuid
 
-from google.adk.runners import Runner  
-from google.adk.sessions import InMemorySessionService  
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from agents.career_agent import root_agent
+from agents.career_agent import root_agent as career_root_agent
+from agents.resume_agent import root_agent as resume_root_agent
 
 APP_NAME = "careerpilot_api"
 
-# One shared session service for the life of the backend process.
-# We're still in the "no database" phase (per Milestone 1's rules) —
-# sessions live in memory and are forgotten on restart. That's fine here
-# because each request below gets its own fresh, throwaway session anyway.
 _session_service = InMemorySessionService()
 
 
-async def run_career_agent(profile: str) -> str:
+async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
     """
-    Sends `profile` text to the existing career_agent and returns its
-    final text response.
-
-    Raises:
-        RuntimeError: if the agent completes but produces no usable text.
-        Exception: whatever the ADK/Gemini layer itself raises (e.g. an
-            API error) — we deliberately let this propagate so main.py's
-            error handling can decide how to respond to the client.
+    Shared execution logic: create a fresh session, run `agent` against
+    `input_text`, and return its final text response. `agent_label` is
+    only used to make error messages identify which agent failed.
     """
     user_id = "api_user"
-    # A fresh session ID per request keeps requests from different users
-    # (or different analyses from the same user) from bleeding into
-    # each other's conversation history.
     session_id = str(uuid.uuid4())
 
     await _session_service.create_session(
@@ -47,12 +39,12 @@ async def run_career_agent(profile: str) -> str:
     )
 
     runner = Runner(
-        agent=root_agent,
+        agent=agent,
         app_name=APP_NAME,
         session_service=_session_service,
     )
 
-    user_message = types.Content(role="user", parts=[types.Part(text=profile)])
+    user_message = types.Content(role="user", parts=[types.Part(text=input_text)])
 
     final_response = None
     async for event in runner.run_async(
@@ -62,6 +54,14 @@ async def run_career_agent(profile: str) -> str:
             final_response = event.content.parts[0].text
 
     if not final_response:
-        raise RuntimeError("career_agent completed but returned no text response")
+        raise RuntimeError(f"{agent_label} completed but returned no text response")
 
     return final_response
+
+
+async def run_career_agent(profile: str) -> str:
+    return await _run_agent(career_root_agent, profile, "career_agent")
+
+
+async def run_resume_agent(resume_text: str) -> str:
+    return await _run_agent(resume_root_agent, resume_text, "resume_agent")
