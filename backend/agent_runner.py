@@ -19,6 +19,7 @@ from google.genai import types
 
 from agents.career_agent import root_agent as career_root_agent
 from agents.resume_agent import root_agent as resume_root_agent
+from agents.github_agent import root_agent as github_root_agent
 
 APP_NAME = "careerpilot_api"
 
@@ -65,3 +66,13 @@ async def run_career_agent(profile: str) -> str:
 
 async def run_resume_agent(resume_text: str) -> str:
     return await _run_agent(resume_root_agent, resume_text, "resume_agent")
+
+async def run_github_agent(username: str) -> str:
+    """
+    Sends a GitHub username to github_agent and returns its final text
+    response. Unlike the other two agents, github_agent will actually
+    call its get_github_profile tool internally before Gemini produces
+    the final analysis — that happens automatically inside run_async,
+    the same execution loop used by every other agent here.
+    """
+    return await _run_agent(github_root_agent, username, "github_agent")

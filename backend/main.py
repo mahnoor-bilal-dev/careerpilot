@@ -7,6 +7,7 @@ are unchanged from Milestones 1 and 3.
 """
 
 import logging
+import re
 
 from dotenv import load_dotenv
 
@@ -16,7 +17,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agent_runner import run_career_agent, run_resume_agent
+from agent_runner import run_career_agent, run_resume_agent, run_github_agent
 from pdf_utils import extract_text_from_pdf
 
 logging.basicConfig(level=logging.INFO)
@@ -104,3 +105,71 @@ async def analyze_resume(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Something went wrong while analyzing your resume. Please try again.")
 
     return ResumeAnalyzeResponse(analysis=analysis)
+
+class GitHubAnalyzeRequest(BaseModel):
+    """Shape of the JSON body the mobile app sends to POST /analyze-github."""
+
+    username: str = Field(
+        ...,
+        min_length=1,
+        max_length=39,  # GitHub's own max username length
+        description="A public GitHub username (not a URL).",
+        examples=["octocat"],
+    )
+
+
+class GitHubAnalyzeResponse(BaseModel):
+    """Shape of the JSON we send back from POST /analyze-github."""
+
+    analysis: str
+
+
+# GitHub usernames may only contain alphanumeric characters and single
+# hyphens, and can't start/end with a hyphen. This rejects obviously
+# invalid input (e.g. a pasted URL or an empty-ish string) before we
+# ever spend an agent/API call on it.
+_GITHUB_USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$")
+
+
+@app.post("/analyze-github", response_model=GitHubAnalyzeResponse)
+async def analyze_github(request: GitHubAnalyzeRequest):
+    """
+    Runs a GitHub username through github_agent, which uses its
+    get_github_profile tool to retrieve real data before analyzing it.
+    Mirrors the same validate -> run agent -> handle errors pattern as
+    the other two analyze endpoints.
+    """
+    username = request.username.strip().lstrip("@")
+
+    if not username:
+        raise HTTPException(status_code=400, detail="GitHub username cannot be empty.")
+
+    if not _GITHUB_USERNAME_PATTERN.match(username):
+        raise HTTPException(
+            status_code=400,
+            detail="That doesn't look like a valid GitHub username. "
+            "Please enter just the username, not a URL.",
+        )
+
+    try:
+        analysis = await run_github_agent(username)
+    except RuntimeError as error:
+        logger.error("github_agent returned no response: %s", error)
+        raise HTTPException(
+            status_code=502,
+            detail="The GitHub agent did not return a response. Please try again.",
+        )
+    except Exception:
+        # Covers ADK/Gemini-layer failures. Note: GitHub-specific issues
+        # (user not found, rate limited) are NOT exceptions — the tool
+        # returns those as a normal {"status": "error", ...} dict, and
+        # github_agent's instruction tells it to explain them in its
+        # own response rather than raising. This except only catches
+        # genuine backend failures.
+        logger.exception("Unexpected error while running github_agent")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while analyzing this GitHub profile. Please try again.",
+        )
+
+    return GitHubAnalyzeResponse(analysis=analysis)

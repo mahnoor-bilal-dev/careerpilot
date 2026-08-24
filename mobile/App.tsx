@@ -22,6 +22,7 @@ import { StatusBar } from "expo-status-bar";
 import * as DocumentPicker from "expo-document-picker";
 import { analyzeCareer } from "./api/careerApi";
 import { analyzeResume, PickedResumeFile } from "./api/resumeApi";
+import { analyzeGitHub } from "./api/githubApi";
 
 type ScreenState = "idle" | "loading" | "success" | "error";
 
@@ -35,6 +36,11 @@ export default function App() {
   const [resumeState, setResumeState] = useState<ScreenState>("idle");
   const [resumeAnalysis, setResumeAnalysis] = useState("");
   const [resumeErrorMessage, setResumeErrorMessage] = useState("");
+
+  const [githubUsername, setGithubUsername] = useState("");
+  const [githubState, setGithubState] = useState<ScreenState>("idle");
+  const [githubAnalysis, setGithubAnalysis] = useState("");
+  const [githubErrorMessage, setGithubErrorMessage] = useState("");
 
   async function handleAnalyzePress() {
     const trimmed = profileText.trim();
@@ -84,6 +90,32 @@ export default function App() {
     } catch (error) {
       setResumeState("error");
       setResumeErrorMessage(error instanceof Error ? error.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  async function handleAnalyzeGitHubPress() {
+    const trimmed = githubUsername.trim();
+
+    if (!trimmed) {
+      setGithubState("error");
+      setGithubErrorMessage("Please enter a GitHub username first.");
+      return;
+    }
+
+    setGithubState("loading");
+    setGithubErrorMessage("");
+
+    try {
+      const result = await analyzeGitHub(trimmed);
+      setGithubAnalysis(result);
+      setGithubState("success");
+    } catch (error) {
+      setGithubState("error");
+      setGithubErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
     }
   }
 
@@ -155,6 +187,54 @@ export default function App() {
               <Text style={styles.resultText}>{resumeAnalysis}</Text>
             </View>
           )}
+
+          <View style={styles.sectionDivider} />
+
+          <Text style={styles.title}>GitHub</Text>
+          <Text style={styles.subtitle}>
+            See how your public repos read to a recruiter
+          </Text>
+
+          <Text style={styles.label}>GitHub username</Text>
+          <TextInput
+            style={styles.usernameInput}
+            placeholder="octocat"
+            placeholderTextColor="#64748B"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={githubUsername}
+            onChangeText={setGithubUsername}
+            editable={githubState !== "loading"}
+          />
+
+          <TouchableOpacity
+            style={[
+              styles.button,
+              styles.buttonSpaced,
+              githubState === "loading" && styles.buttonDisabled,
+            ]}
+            onPress={handleAnalyzeGitHubPress}
+            disabled={githubState === "loading"}
+          >
+            {githubState === "loading" ? (
+              <ActivityIndicator color="#0F172A" />
+            ) : (
+              <Text style={styles.buttonText}>Analyze GitHub</Text>
+            )}
+          </TouchableOpacity>
+
+          {githubState === "error" && (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorText}>{githubErrorMessage}</Text>
+            </View>
+          )}
+
+          {githubState === "success" && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultLabel}>GitHub Analysis</Text>
+              <Text style={styles.resultText}>{githubAnalysis}</Text>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -169,6 +249,13 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 16, color: "#94A3B8", marginBottom: 32 },
   label: { fontSize: 14, fontWeight: "600", color: "#CBD5E1", marginBottom: 8 },
   textInput: { backgroundColor: "#1E293B", borderRadius: 12, padding: 16, fontSize: 15, color: "#F8FAFC", minHeight: 140, textAlignVertical: "top", marginBottom: 20 },
+  usernameInput: {
+  backgroundColor: "#1E293B",
+  borderRadius: 12,
+  padding: 16,
+  fontSize: 15,
+  color: "#F8FAFC",
+},
   button: { backgroundColor: "#38BDF8", borderRadius: 12, paddingVertical: 16, alignItems: "center", justifyContent: "center" },
   buttonDisabled: { opacity: 0.7 },
   buttonSpaced: { marginTop: 16 },
