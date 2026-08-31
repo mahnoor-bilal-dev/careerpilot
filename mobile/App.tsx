@@ -23,6 +23,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { analyzeCareer } from "./api/careerApi";
 import { analyzeResume, PickedResumeFile } from "./api/resumeApi";
 import { analyzeGitHub } from "./api/githubApi";
+import { analyzeJob } from "./api/jobApi";
 
 type ScreenState = "idle" | "loading" | "success" | "error";
 
@@ -41,6 +42,11 @@ export default function App() {
   const [githubState, setGithubState] = useState<ScreenState>("idle");
   const [githubAnalysis, setGithubAnalysis] = useState("");
   const [githubErrorMessage, setGithubErrorMessage] = useState("");
+
+  const [jobDescription, setJobDescription] = useState("");
+  const [jobState, setJobState] = useState<ScreenState>("idle");
+  const [jobAnalysis, setJobAnalysis] = useState("");
+  const [jobErrorMessage, setJobErrorMessage] = useState("");
 
   async function handleAnalyzePress() {
     const trimmed = profileText.trim();
@@ -112,6 +118,41 @@ export default function App() {
     } catch (error) {
       setGithubState("error");
       setGithubErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
+    }
+  }
+
+  async function handleAnalyzeJobPress() {
+    const trimmedProfile = profileText.trim();
+    const trimmedJobDescription = jobDescription.trim();
+
+    if (!trimmedProfile) {
+      setJobState("error");
+      setJobErrorMessage(
+        "Please enter your career profile in the section above before matching a job."
+      );
+      return;
+    }
+
+    if (!trimmedJobDescription) {
+      setJobState("error");
+      setJobErrorMessage("Please paste a job description first.");
+      return;
+    }
+
+    setJobState("loading");
+    setJobErrorMessage("");
+
+    try {
+      const result = await analyzeJob(trimmedProfile, trimmedJobDescription);
+      setJobAnalysis(result);
+      setJobState("success");
+    } catch (error) {
+      setJobState("error");
+      setJobErrorMessage(
         error instanceof Error
           ? error.message
           : "Something went wrong. Please try again."
@@ -235,6 +276,64 @@ export default function App() {
               <Text style={styles.resultText}>{githubAnalysis}</Text>
             </View>
           )}
+
+          <View style={styles.sectionDivider} />
+
+          <Text style={styles.title}>Job Match</Text>
+          <Text style={styles.subtitle}>
+            See how well your profile fits a specific role
+          </Text>
+
+          {!profileText.trim() && (
+            <View style={styles.noticeCard}>
+              <Text style={styles.noticeText}>
+                Enter your career profile in the section above first — job
+                matching compares that profile against the job description
+                below.
+              </Text>
+            </View>
+          )}
+
+          <Text style={styles.label}>Job description</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder="Paste the job description here..."
+            placeholderTextColor="#64748B"
+            multiline
+            numberOfLines={6}
+            value={jobDescription}
+            onChangeText={setJobDescription}
+            editable={jobState !== "loading"}
+          />
+
+          <TouchableOpacity
+            style={[
+              styles.button,
+              (jobState === "loading" || !profileText.trim()) &&
+                styles.buttonDisabled,
+            ]}
+            onPress={handleAnalyzeJobPress}
+            disabled={jobState === "loading" || !profileText.trim()}
+          >
+            {jobState === "loading" ? (
+              <ActivityIndicator color="#0F172A" />
+            ) : (
+              <Text style={styles.buttonText}>Analyze Job Match</Text>
+            )}
+          </TouchableOpacity>
+
+          {jobState === "error" && (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorText}>{jobErrorMessage}</Text>
+            </View>
+          )}
+
+          {jobState === "success" && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultLabel}>Job Match Analysis</Text>
+              <Text style={styles.resultText}>{jobAnalysis}</Text>
+            </View>
+          )}    
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -266,6 +365,19 @@ const styles = StyleSheet.create({
   buttonText: { color: "#0F172A", fontSize: 16, fontWeight: "700" },
   errorCard: { backgroundColor: "#1E293B", borderLeftWidth: 4, borderLeftColor: "#F87171", borderRadius: 8, padding: 16, marginTop: 20 },
   errorText: { color: "#F87171", fontSize: 14 },
+  noticeCard: {
+  backgroundColor: "#1E293B",
+  borderLeftWidth: 4,
+  borderLeftColor: "#38BDF8",
+  borderRadius: 8,
+  padding: 16,
+  marginBottom: 20,
+},
+noticeText: {
+  color: "#94A3B8",
+  fontSize: 14,
+  lineHeight: 20,
+},
   resultCard: { backgroundColor: "#1E293B", borderRadius: 12, padding: 20, marginTop: 20 },
   resultLabel: { fontSize: 14, fontWeight: "700", color: "#38BDF8", marginBottom: 12, textTransform: "uppercase", letterSpacing: 0.5 },
   resultText: { fontSize: 15, color: "#E2E8F0", lineHeight: 22 },

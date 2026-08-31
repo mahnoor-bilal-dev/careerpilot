@@ -20,6 +20,7 @@ from google.genai import types
 from agents.career_agent import root_agent as career_root_agent
 from agents.resume_agent import root_agent as resume_root_agent
 from agents.github_agent import root_agent as github_root_agent
+from agents.job_agent import root_agent as job_root_agent
 
 APP_NAME = "careerpilot_api"
 
@@ -76,3 +77,20 @@ async def run_github_agent(username: str) -> str:
     the same execution loop used by every other agent here.
     """
     return await _run_agent(github_root_agent, username, "github_agent")
+
+async def run_job_agent(profile: str, job_description: str) -> str:
+    """
+    Sends both the user's career profile and a job description to
+    job_agent and returns its match analysis.
+
+    job_agent needs two separate pieces of context at once, unlike the
+    other agents which only ever receive one. There's no special ADK
+    mechanism for "multiple inputs" — we simply combine both texts into
+    one clearly labeled message. The agent's instruction tells it what
+    each label means and how to read them together.
+    """
+    combined_input = (
+        f"CAREER PROFILE:\n{profile}\n\n"
+        f"JOB DESCRIPTION:\n{job_description}"
+    )
+    return await _run_agent(job_root_agent, combined_input, "job_agent")

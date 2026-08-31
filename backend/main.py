@@ -17,7 +17,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agent_runner import run_career_agent, run_resume_agent, run_github_agent
+from agent_runner import run_career_agent, run_resume_agent, run_github_agent, run_job_agent
 from pdf_utils import extract_text_from_pdf
 
 logging.basicConfig(level=logging.INFO)
@@ -173,3 +173,60 @@ async def analyze_github(request: GitHubAnalyzeRequest):
         )
 
     return GitHubAnalyzeResponse(analysis=analysis)
+
+class JobAnalyzeRequest(BaseModel):
+    """Shape of the JSON body the mobile app sends to POST /analyze-job."""
+
+    profile: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="The user's career profile text.",
+    )
+    job_description: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+        description="The full text of the target job description.",
+    )
+
+
+class JobAnalyzeResponse(BaseModel):
+    """Shape of the JSON we send back from POST /analyze-job."""
+
+    analysis: str
+
+
+@app.post("/analyze-job", response_model=JobAnalyzeResponse)
+async def analyze_job(request: JobAnalyzeRequest):
+    """
+    Runs a career profile and a job description through job_agent,
+    which compares them and returns a structured match analysis.
+    Mirrors the same validate -> run agent -> handle errors pattern as
+    the other analyze endpoints.
+    """
+    profile = request.profile.strip()
+    job_description = request.job_description.strip()
+
+    if not profile:
+        raise HTTPException(status_code=400, detail="Career profile cannot be empty.")
+
+    if not job_description:
+        raise HTTPException(status_code=400, detail="Job description cannot be empty.")
+
+    try:
+        analysis = await run_job_agent(profile, job_description)
+    except RuntimeError as error:
+        logger.error("job_agent returned no response: %s", error)
+        raise HTTPException(
+            status_code=502,
+            detail="The job matching agent did not return a response. Please try again.",
+        )
+    except Exception:
+        logger.exception("Unexpected error while running job_agent")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while analyzing this job match. Please try again.",
+        )
+
+    return JobAnalyzeResponse(analysis=analysis)
