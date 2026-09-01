@@ -1,13 +1,16 @@
 """
-CareerPilot — Agent Runner (Milestone 3, extended in Milestone 4)
+CareerPilot — Agent Runner (Milestone 3, extended through Milestone 7A)
 
 This wraps the same Runner/SessionService pattern proven in test_agent.py
 into reusable async functions. FastAPI calls these functions instead of
 re-implementing the Runner setup inline inside main.py.
 
-Milestone 4 adds run_resume_agent alongside the existing run_career_agent,
-sharing one internal helper so the ADK execution logic isn't duplicated.
-Neither career_agent.py nor resume_agent.py change as a result.
+Milestone 7A change: each agent now has an output_schema, so the final
+event's text is a JSON string conforming to that schema rather than free
+prose. _run_agent itself is UNCHANGED — it still just returns that raw
+text. The new _parse_structured() step, added on top, is where we
+convert that JSON text into a validated Pydantic object, using Pydantic's
+own model_validate_json rather than any manual/regex parsing.
 """
 
 import uuid
@@ -16,11 +19,17 @@ from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from pydantic import BaseModel, ValidationError
 
 from agents.career_agent import root_agent as career_root_agent
 from agents.resume_agent import root_agent as resume_root_agent
 from agents.github_agent import root_agent as github_root_agent
 from agents.job_agent import root_agent as job_root_agent
+
+from schemas.career_schema import CareerOutput
+from schemas.resume_schema import ResumeOutput
+from schemas.github_schema import GitHubOutput
+from schemas.job_schema import JobOutput
 
 APP_NAME = "careerpilot_api"
 
@@ -30,8 +39,12 @@ _session_service = InMemorySessionService()
 async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
     """
     Shared execution logic: create a fresh session, run `agent` against
-    `input_text`, and return its final text response. `agent_label` is
-    only used to make error messages identify which agent failed.
+    `input_text`, and return its final text response.
+
+    UNCHANGED from Milestone 6 — this function has no idea whether the
+    agent has a schema or not. It just returns whatever text the model's
+    final event contains. Structured parsing happens one layer up, in
+    _parse_structured().
     """
     user_id = "api_user"
     session_id = str(uuid.uuid4())
@@ -61,36 +74,46 @@ async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
     return final_response
 
 
-async def run_career_agent(profile: str) -> str:
-    return await _run_agent(career_root_agent, profile, "career_agent")
-
-
-async def run_resume_agent(resume_text: str) -> str:
-    return await _run_agent(resume_root_agent, resume_text, "resume_agent")
-
-async def run_github_agent(username: str) -> str:
+def _parse_structured(
+    raw_text: str, schema_cls: type[BaseModel], agent_label: str
+) -> BaseModel:
     """
-    Sends a GitHub username to github_agent and returns its final text
-    response. Unlike the other two agents, github_agent will actually
-    call its get_github_profile tool internally before Gemini produces
-    the final analysis — that happens automatically inside run_async,
-    the same execution loop used by every other agent here.
-    """
-    return await _run_agent(github_root_agent, username, "github_agent")
+    Validates and parses `raw_text` (expected to be JSON matching
+    `schema_cls`) into a real Pydantic object.
 
-async def run_job_agent(profile: str, job_description: str) -> str:
+    This is the "controlled parsing" the milestone calls for: we rely on
+    Pydantic's own model_validate_json, which either returns a fully
+    validated object or raises — we never manually scan/regex the text
+    ourselves.
     """
-    Sends both the user's career profile and a job description to
-    job_agent and returns its match analysis.
+    try:
+        return schema_cls.model_validate_json(raw_text)
+    except ValidationError as error:
+        raise ValueError(
+            f"{agent_label} returned output that didn't match the expected "
+            f"structure: {error}"
+        ) from error
 
-    job_agent needs two separate pieces of context at once, unlike the
-    other agents which only ever receive one. There's no special ADK
-    mechanism for "multiple inputs" — we simply combine both texts into
-    one clearly labeled message. The agent's instruction tells it what
-    each label means and how to read them together.
-    """
+
+async def run_career_agent(profile: str) -> CareerOutput:
+    raw_text = await _run_agent(career_root_agent, profile, "career_agent")
+    return _parse_structured(raw_text, CareerOutput, "career_agent")
+
+
+async def run_resume_agent(resume_text: str) -> ResumeOutput:
+    raw_text = await _run_agent(resume_root_agent, resume_text, "resume_agent")
+    return _parse_structured(raw_text, ResumeOutput, "resume_agent")
+
+
+async def run_github_agent(username: str) -> GitHubOutput:
+    raw_text = await _run_agent(github_root_agent, username, "github_agent")
+    return _parse_structured(raw_text, GitHubOutput, "github_agent")
+
+
+async def run_job_agent(profile: str, job_description: str) -> JobOutput:
     combined_input = (
         f"CAREER PROFILE:\n{profile}\n\n"
         f"JOB DESCRIPTION:\n{job_description}"
     )
-    return await _run_agent(job_root_agent, combined_input, "job_agent")
+    raw_text = await _run_agent(job_root_agent, combined_input, "job_agent")
+    return _parse_structured(raw_text, JobOutput, "job_agent")

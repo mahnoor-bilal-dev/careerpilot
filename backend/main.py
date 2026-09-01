@@ -1,9 +1,12 @@
 """
-CareerPilot Backend — Milestone 4
+CareerPilot Backend — through Milestone 7A
 
-Adds POST /analyze-resume, which accepts a PDF upload, extracts its text,
-and runs it through resume_agent. GET /, GET /health, and POST /analyze
-are unchanged from Milestones 1 and 3.
+GET /              (Milestone 1)
+GET /health        (Milestone 1)
+POST /analyze          (Milestone 3, structured internally since 7A)
+POST /analyze-resume   (Milestone 4, structured internally since 7A)
+POST /analyze-github   (Milestone 5, structured internally since 7A)
+POST /analyze-job      (Milestone 6, structured internally since 7A)
 """
 
 import logging
@@ -59,15 +62,18 @@ async def analyze_career(request: AnalyzeRequest):
         raise HTTPException(status_code=400, detail="Profile text cannot be empty.")
 
     try:
-        analysis = await run_career_agent(profile)
+        result = await run_career_agent(profile)
     except RuntimeError as error:
         logger.error("career_agent returned no response: %s", error)
         raise HTTPException(status_code=502, detail="The career agent did not return a response. Please try again.")
+    except ValueError as error:
+        logger.error("career_agent returned invalid structured output: %s", error)
+        raise HTTPException(status_code=502, detail="The career agent returned an unexpected response. Please try again.")
     except Exception:
         logger.exception("Unexpected error while running career_agent")
         raise HTTPException(status_code=500, detail="Something went wrong while analyzing your profile. Please try again.")
 
-    return AnalyzeResponse(analysis=analysis)
+    return AnalyzeResponse(analysis=result.to_display_text())
 
 
 class ResumeAnalyzeResponse(BaseModel):
@@ -96,49 +102,39 @@ async def analyze_resume(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(error))
 
     try:
-        analysis = await run_resume_agent(resume_text)
+        result = await run_resume_agent(resume_text)
     except RuntimeError as error:
         logger.error("resume_agent returned no response: %s", error)
         raise HTTPException(status_code=502, detail="The resume agent did not return a response. Please try again.")
+    except ValueError as error:
+        logger.error("resume_agent returned invalid structured output: %s", error)
+        raise HTTPException(status_code=502, detail="The resume agent returned an unexpected response. Please try again.")
     except Exception:
         logger.exception("Unexpected error while running resume_agent")
         raise HTTPException(status_code=500, detail="Something went wrong while analyzing your resume. Please try again.")
 
-    return ResumeAnalyzeResponse(analysis=analysis)
+    return ResumeAnalyzeResponse(analysis=result.to_display_text())
+
 
 class GitHubAnalyzeRequest(BaseModel):
-    """Shape of the JSON body the mobile app sends to POST /analyze-github."""
-
     username: str = Field(
         ...,
         min_length=1,
-        max_length=39,  # GitHub's own max username length
+        max_length=39,
         description="A public GitHub username (not a URL).",
         examples=["octocat"],
     )
 
 
 class GitHubAnalyzeResponse(BaseModel):
-    """Shape of the JSON we send back from POST /analyze-github."""
-
     analysis: str
 
 
-# GitHub usernames may only contain alphanumeric characters and single
-# hyphens, and can't start/end with a hyphen. This rejects obviously
-# invalid input (e.g. a pasted URL or an empty-ish string) before we
-# ever spend an agent/API call on it.
 _GITHUB_USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$")
 
 
 @app.post("/analyze-github", response_model=GitHubAnalyzeResponse)
 async def analyze_github(request: GitHubAnalyzeRequest):
-    """
-    Runs a GitHub username through github_agent, which uses its
-    get_github_profile tool to retrieve real data before analyzing it.
-    Mirrors the same validate -> run agent -> handle errors pattern as
-    the other two analyze endpoints.
-    """
     username = request.username.strip().lstrip("@")
 
     if not username:
@@ -152,59 +148,31 @@ async def analyze_github(request: GitHubAnalyzeRequest):
         )
 
     try:
-        analysis = await run_github_agent(username)
+        result = await run_github_agent(username)
     except RuntimeError as error:
         logger.error("github_agent returned no response: %s", error)
-        raise HTTPException(
-            status_code=502,
-            detail="The GitHub agent did not return a response. Please try again.",
-        )
+        raise HTTPException(status_code=502, detail="The GitHub agent did not return a response. Please try again.")
+    except ValueError as error:
+        logger.error("github_agent returned invalid structured output: %s", error)
+        raise HTTPException(status_code=502, detail="The GitHub agent returned an unexpected response. Please try again.")
     except Exception:
-        # Covers ADK/Gemini-layer failures. Note: GitHub-specific issues
-        # (user not found, rate limited) are NOT exceptions — the tool
-        # returns those as a normal {"status": "error", ...} dict, and
-        # github_agent's instruction tells it to explain them in its
-        # own response rather than raising. This except only catches
-        # genuine backend failures.
         logger.exception("Unexpected error while running github_agent")
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while analyzing this GitHub profile. Please try again.",
-        )
+        raise HTTPException(status_code=500, detail="Something went wrong while analyzing this GitHub profile. Please try again.")
 
-    return GitHubAnalyzeResponse(analysis=analysis)
+    return GitHubAnalyzeResponse(analysis=result.to_display_text())
+
 
 class JobAnalyzeRequest(BaseModel):
-    """Shape of the JSON body the mobile app sends to POST /analyze-job."""
-
-    profile: str = Field(
-        ...,
-        min_length=1,
-        max_length=5000,
-        description="The user's career profile text.",
-    )
-    job_description: str = Field(
-        ...,
-        min_length=1,
-        max_length=10000,
-        description="The full text of the target job description.",
-    )
+    profile: str = Field(..., min_length=1, max_length=5000, description="The user's career profile text.")
+    job_description: str = Field(..., min_length=1, max_length=10000, description="The full text of the target job description.")
 
 
 class JobAnalyzeResponse(BaseModel):
-    """Shape of the JSON we send back from POST /analyze-job."""
-
     analysis: str
 
 
 @app.post("/analyze-job", response_model=JobAnalyzeResponse)
 async def analyze_job(request: JobAnalyzeRequest):
-    """
-    Runs a career profile and a job description through job_agent,
-    which compares them and returns a structured match analysis.
-    Mirrors the same validate -> run agent -> handle errors pattern as
-    the other analyze endpoints.
-    """
     profile = request.profile.strip()
     job_description = request.job_description.strip()
 
@@ -215,18 +183,15 @@ async def analyze_job(request: JobAnalyzeRequest):
         raise HTTPException(status_code=400, detail="Job description cannot be empty.")
 
     try:
-        analysis = await run_job_agent(profile, job_description)
+        result = await run_job_agent(profile, job_description)
     except RuntimeError as error:
         logger.error("job_agent returned no response: %s", error)
-        raise HTTPException(
-            status_code=502,
-            detail="The job matching agent did not return a response. Please try again.",
-        )
+        raise HTTPException(status_code=502, detail="The job matching agent did not return a response. Please try again.")
+    except ValueError as error:
+        logger.error("job_agent returned invalid structured output: %s", error)
+        raise HTTPException(status_code=502, detail="The job matching agent returned an unexpected response. Please try again.")
     except Exception:
         logger.exception("Unexpected error while running job_agent")
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong while analyzing this job match. Please try again.",
-        )
+        raise HTTPException(status_code=500, detail="Something went wrong while analyzing this job match. Please try again.")
 
-    return JobAnalyzeResponse(analysis=analysis)
+    return JobAnalyzeResponse(analysis=result.to_display_text())

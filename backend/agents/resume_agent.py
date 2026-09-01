@@ -16,6 +16,8 @@ agent trying to do everything.
 
 from google.adk.agents import Agent
 
+from backend.schemas.resume_schema import ResumeOutput
+
 root_agent = Agent(
     name="resume_agent",
     model="gemini-3.6-flash",
@@ -58,4 +60,5 @@ root_agent = Agent(
         "Be specific — reference actual content from the resume. Do not "
         "invent information that isn't present in the text."
     ),
+    output_schema=ResumeOutput,
 )

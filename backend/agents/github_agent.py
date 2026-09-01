@@ -10,6 +10,7 @@ ourselves and hand it pre-packaged; the agent retrieves it.
 
 from google.adk.agents import Agent
 
+from backend.schemas.github_schema import GitHubOutput
 from tools.github_tool import get_github_profile
 
 root_agent = Agent(
@@ -57,4 +58,5 @@ root_agent = Agent(
         "rather than inventing content to fill out the structure."
     ),
     tools=[get_github_profile],
+    output_schema=GitHubOutput,
 )

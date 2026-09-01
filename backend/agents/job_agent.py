@@ -14,6 +14,8 @@ those two texts get combined into a single input message.
 
 from google.adk.agents import Agent
 
+from backend.schemas.job_schema import JobOutput
+
 root_agent = Agent(
     name="job_agent",
     model="gemini-3.6-flash",
@@ -73,4 +75,5 @@ root_agent = Agent(
         "(2-3 sentences giving an honest, concise overall assessment of "
         "fit for this specific job)"
     ),
+    output_schema=JobOutput,
 )

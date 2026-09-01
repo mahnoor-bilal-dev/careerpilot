@@ -12,6 +12,7 @@ the input text alone.
 """
 
 from google.adk.agents import Agent
+from backend.schemas.career_schema import CareerOutput
 
 # ADK's CLI tooling (adk run / adk web) looks for a variable named
 # `root_agent` by convention. We're not using that CLI yet, but naming it
@@ -43,4 +44,5 @@ root_agent = Agent(
         "the user mentioned. Do not give generic advice that could apply "
         "to anyone."
     ),
+    output_schema=CareerOutput,
 )
