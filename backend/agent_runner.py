@@ -20,6 +20,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from pydantic import BaseModel, ValidationError
+from agents.orchestrator_agent import root_agent as orchestrator_root_agent
 
 from agents.career_agent import root_agent as career_root_agent
 from agents.resume_agent import root_agent as resume_root_agent
@@ -74,9 +75,7 @@ async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
     return final_response
 
 
-def _parse_structured(
-    raw_text: str, schema_cls: type[BaseModel], agent_label: str
-) -> BaseModel:
+def _parse_structured(raw_text: str, schema_cls: type[BaseModel], agent_label: str) -> BaseModel:
     """
     Validates and parses `raw_text` (expected to be JSON matching
     `schema_cls`) into a real Pydantic object.
@@ -117,3 +116,21 @@ async def run_job_agent(profile: str, job_description: str) -> JobOutput:
     )
     raw_text = await _run_agent(job_root_agent, combined_input, "job_agent")
     return _parse_structured(raw_text, JobOutput, "job_agent")
+
+async def run_orchestrator_agent(user_request: str) -> str:
+    """
+    Sends a free-form request to orchestrator_agent, which decides for
+    itself which specialist(s) to call (via its single-turn sub-agent
+    tools), gathers their structured results, and synthesizes a final
+    answer.
+
+    Unlike the four specialist functions above, this returns plain text,
+    not a parsed schema object — the orchestrator's job is synthesis
+    across specialists, and Milestone 7B doesn't define a fixed shape
+    for that combined answer. `user_request` should include whatever
+    context is actually available (profile text, resume text, GitHub
+    username, job description) — the orchestrator's own instruction
+    tells it how to route each piece to the right specialist tool, and
+    to skip specialists it lacks input for rather than guessing.
+    """
+    return await _run_agent(orchestrator_root_agent, user_request, "orchestrator_agent")

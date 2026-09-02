@@ -10,7 +10,7 @@ ourselves and hand it pre-packaged; the agent retrieves it.
 
 from google.adk.agents import Agent
 
-from backend.schemas.github_schema import GitHubOutput
+from schemas.github_schema import GitHubOutput
 from tools.github_tool import get_github_profile
 
 root_agent = Agent(

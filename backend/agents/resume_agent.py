@@ -16,7 +16,7 @@ agent trying to do everything.
 
 from google.adk.agents import Agent
 
-from backend.schemas.resume_schema import ResumeOutput
+from schemas.resume_schema import ResumeOutput
 
 root_agent = Agent(
     name="resume_agent",

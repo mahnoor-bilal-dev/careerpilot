@@ -12,7 +12,7 @@ the input text alone.
 """
 
 from google.adk.agents import Agent
-from backend.schemas.career_schema import CareerOutput
+from schemas.career_schema import CareerOutput
 
 # ADK's CLI tooling (adk run / adk web) looks for a variable named
 # `root_agent` by convention. We're not using that CLI yet, but naming it
