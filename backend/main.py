@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agent_runner import run_career_agent, run_resume_agent, run_github_agent, run_job_agent
+from agent_runner import run_career_agent, run_resume_agent, run_github_agent, run_job_agent, run_orchestrator_agent
 from pdf_utils import extract_text_from_pdf
 
 logging.basicConfig(level=logging.INFO)
@@ -195,3 +195,104 @@ async def analyze_job(request: JobAnalyzeRequest):
         raise HTTPException(status_code=500, detail="Something went wrong while analyzing this job match. Please try again.")
 
     return JobAnalyzeResponse(analysis=result.to_display_text())
+
+class OrchestrateRequest(BaseModel):
+    """
+    Shape of the JSON body for POST /orchestrate. Every field is optional
+    on its own — validation below requires at least one to have real
+    content — since the whole point of the orchestrator is deciding for
+    itself which specialists are relevant to whatever subset of these
+    the user actually provided.
+    """
+
+    profile: str | None = Field(
+        default=None, max_length=5000, description="The user's career profile text."
+    )
+    resume_text: str | None = Field(
+        default=None,
+        max_length=20000,
+        description="Extracted resume text (e.g. from a prior /analyze-resume PDF extraction).",
+    )
+    github_username: str | None = Field(
+        default=None,
+        max_length=39,  # same limit as /analyze-github, GitHub's own max length
+        description="A public GitHub username (not a URL).",
+    )
+    job_description: str | None = Field(
+        default=None, max_length=10000, description="The full text of a target job description."
+    )
+
+
+class OrchestrateResponse(BaseModel):
+    """Shape of the JSON we send back from POST /orchestrate."""
+
+    analysis: str
+
+
+@app.post("/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate(request: OrchestrateRequest):
+    """
+    Builds a single labeled request message from whichever inputs were
+    actually provided, then hands the ENTIRE decision of which
+    specialist(s) to call to orchestrator_agent via run_orchestrator_agent.
+
+    This endpoint deliberately contains no branching logic like
+    "if github_username: call github_agent" — that would recreate the
+    orchestration ADK is already doing internally via its single_turn
+    sub-agent tools. Our only job here is validation and formatting the
+    input into clearly labeled sections; the actual routing decision is
+    made by the orchestrator's own instruction, exactly as it is when
+    test_orchestrator.py calls it directly.
+    """
+    profile = (request.profile or "").strip()
+    resume_text = (request.resume_text or "").strip()
+    github_username = (request.github_username or "").strip().lstrip("@")
+    job_description = (request.job_description or "").strip()
+
+    if not any([profile, resume_text, github_username, job_description]):
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide at least one of: profile, resume_text, "
+            "github_username, job_description.",
+        )
+
+    if github_username and not _GITHUB_USERNAME_PATTERN.match(github_username):
+        raise HTTPException(
+            status_code=400,
+            detail="That doesn't look like a valid GitHub username. "
+            "Please enter just the username, not a URL.",
+        )
+
+    sections = []
+    if profile:
+        sections.append(f"CAREER PROFILE:\n{profile}")
+    if resume_text:
+        sections.append(f"RESUME TEXT:\n{resume_text}")
+    if github_username:
+        sections.append(f"GITHUB USERNAME:\n{github_username}")
+    if job_description:
+        sections.append(f"JOB DESCRIPTION:\n{job_description}")
+
+    user_request = (
+        "The user provided the following information. Use only the "
+        "specialists relevant to what's actually present below, and "
+        "skip any specialist you don't have input for.\n\n"
+        + "\n\n".join(sections)
+    )
+
+    try:
+        analysis = await run_orchestrator_agent(user_request)
+    except RuntimeError as error:
+        logger.error("orchestrator_agent returned no response: %s", error)
+        raise HTTPException(
+            status_code=502,
+            detail="The orchestrator did not return a response. Please try again.",
+        )
+    except Exception:
+        logger.exception("Unexpected error while running orchestrator_agent")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while processing your request. Please try again.",
+        )
+
+    return OrchestrateResponse(analysis=analysis)
