@@ -1,12 +1,14 @@
 """
-CareerPilot Backend — through Milestone 7A
+CareerPilot Backend — through Milestone 8
 
 GET /              (Milestone 1)
 GET /health        (Milestone 1)
-POST /analyze          (Milestone 3, structured internally since 7A)
-POST /analyze-resume   (Milestone 4, structured internally since 7A)
-POST /analyze-github   (Milestone 5, structured internally since 7A)
-POST /analyze-job      (Milestone 6, structured internally since 7A)
+POST /analyze          (Milestone 3)
+POST /analyze-resume   (Milestone 4)
+POST /extract-resume-text  (Milestone 8)
+POST /analyze-github   (Milestone 5)
+POST /analyze-job      (Milestone 6)
+POST /orchestrate      (Milestone 7B)
 """
 
 import logging
@@ -116,11 +118,49 @@ async def analyze_resume(file: UploadFile = File(...)):
     return ResumeAnalyzeResponse(analysis=result.to_display_text())
 
 
+class ExtractResumeTextResponse(BaseModel):
+    """Shape of the JSON we send back from POST /extract-resume-text."""
+
+    resume_text: str
+
+
+@app.post("/extract-resume-text", response_model=ExtractResumeTextResponse)
+async def extract_resume_text_endpoint(file: UploadFile = File(...)):
+    """
+    Milestone 8 addition: extracts and returns raw PDF text WITHOUT
+    running resume_agent. This exists because the mobile app needs
+    resume_text as plain input to POST /orchestrate, and /analyze-resume
+    only ever returns the final analysis, never the raw extracted text.
+
+    Deliberately does not touch /analyze-resume or resume_agent at all —
+    this is a second, independent, additive endpoint. Validation mirrors
+    /analyze-resume exactly (same content-type/empty/size checks, same
+    extract_text_from_pdf helper) so behavior stays consistent.
+    """
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported. Please upload a PDF resume.")
+
+    pdf_bytes = await file.read()
+
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    if len(pdf_bytes) > MAX_RESUME_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="The uploaded file is too large. Please upload a PDF under 5MB.")
+
+    try:
+        resume_text = extract_text_from_pdf(pdf_bytes)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return ExtractResumeTextResponse(resume_text=resume_text)
+
+
 class GitHubAnalyzeRequest(BaseModel):
     username: str = Field(
         ...,
         min_length=1,
-        max_length=39,
+        max_length=39,  # GitHub's own max username length
         description="A public GitHub username (not a URL).",
         examples=["octocat"],
     )
@@ -130,6 +170,8 @@ class GitHubAnalyzeResponse(BaseModel):
     analysis: str
 
 
+# GitHub usernames may only contain alphanumeric characters and single
+# hyphens, and can't start/end with a hyphen.
 _GITHUB_USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$")
 
 
@@ -196,6 +238,7 @@ async def analyze_job(request: JobAnalyzeRequest):
 
     return JobAnalyzeResponse(analysis=result.to_display_text())
 
+
 class OrchestrateRequest(BaseModel):
     """
     Shape of the JSON body for POST /orchestrate. Every field is optional
@@ -256,6 +299,9 @@ async def orchestrate(request: OrchestrateRequest):
             "github_username, job_description.",
         )
 
+    # Reuses the EXACT SAME pattern /analyze-github already validates
+    # against — imported nowhere, just referenced directly, since it's
+    # already a module-level constant in this same file.
     if github_username and not _GITHUB_USERNAME_PATTERN.match(github_username):
         raise HTTPException(
             status_code=400,

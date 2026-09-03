@@ -10,4 +10,4 @@
  * - Android emulator: "http://10.0.2.2:8000"
  * - iOS simulator: "http://localhost:8000" works fine
  */
-export const API_BASE_URL = "http://localhost:8000";
+export const API_BASE_URL = "http://192.168.100.236:8000";
