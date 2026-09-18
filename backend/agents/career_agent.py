@@ -19,7 +19,7 @@ from schemas.career_schema import CareerOutput
 # this way now means we get that tooling for free later.
 root_agent = Agent(
     name="career_agent",
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     description=(
         "Analyzes a user's career profile and produces strengths, "
         "skill gaps, career direction, and recommendations."

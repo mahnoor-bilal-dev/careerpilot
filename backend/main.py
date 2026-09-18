@@ -1,5 +1,5 @@
 """
-CareerPilot Backend — through Milestone 8
+CareerPilot Backend — through Milestone 9
 
 GET /              (Milestone 1)
 GET /health        (Milestone 1)
@@ -8,7 +8,7 @@ POST /analyze-resume   (Milestone 4)
 POST /extract-resume-text  (Milestone 8)
 POST /analyze-github   (Milestone 5)
 POST /analyze-job      (Milestone 6)
-POST /orchestrate      (Milestone 7B)
+POST /orchestrate      (Milestone 7B, structured output Milestone 9)
 """
 
 import logging
@@ -16,6 +16,10 @@ import re
 
 from dotenv import load_dotenv
 
+# Must run before importing agent_runner / career_agent, since those
+# modules (via ADK/google-genai) read GEMINI_API_KEY from the environment
+# as soon as they're imported. Without this, uvicorn never loads .env on
+# its own the way test_agent.py's load_dotenv() call did.
 load_dotenv()
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -24,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from agent_runner import run_career_agent, run_resume_agent, run_github_agent, run_job_agent, run_orchestrator_agent
 from pdf_utils import extract_text_from_pdf
+from schemas.orchestrator_schema import OrchestratorOutput
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("careerpilot")
@@ -85,9 +90,31 @@ class ResumeAnalyzeResponse(BaseModel):
 MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
+def _is_pdf_file(file: UploadFile) -> bool:
+    """
+    Validates whether an uploaded file is a PDF based on content-type
+    or file extension. Mobile pickers often send application/octet-stream
+    or empty content-type for local file URIs.
+    """
+    content_type = (file.content_type or "").lower()
+    filename = (file.filename or "").lower()
+
+    is_pdf_mime = "pdf" in content_type
+    is_pdf_ext = filename.endswith(".pdf")
+    is_generic_mime = content_type in [
+        "application/octet-stream",
+        "binary/octet-stream",
+        "",
+        "content/unknown",
+        "*/*",
+    ]
+
+    return is_pdf_mime or (is_generic_mime and is_pdf_ext) or is_pdf_ext
+
+
 @app.post("/analyze-resume", response_model=ResumeAnalyzeResponse)
 async def analyze_resume(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf":
+    if not _is_pdf_file(file):
         raise HTTPException(status_code=400, detail="Only PDF files are supported. Please upload a PDF resume.")
 
     pdf_bytes = await file.read()
@@ -137,7 +164,7 @@ async def extract_resume_text_endpoint(file: UploadFile = File(...)):
     /analyze-resume exactly (same content-type/empty/size checks, same
     extract_text_from_pdf helper) so behavior stays consistent.
     """
-    if file.content_type != "application/pdf":
+    if not _is_pdf_file(file):
         raise HTTPException(status_code=400, detail="Only PDF files are supported. Please upload a PDF resume.")
 
     pdf_bytes = await file.read()
@@ -266,13 +293,7 @@ class OrchestrateRequest(BaseModel):
     )
 
 
-class OrchestrateResponse(BaseModel):
-    """Shape of the JSON we send back from POST /orchestrate."""
-
-    analysis: str
-
-
-@app.post("/orchestrate", response_model=OrchestrateResponse)
+@app.post("/orchestrate", response_model=OrchestratorOutput)
 async def orchestrate(request: OrchestrateRequest):
     """
     Builds a single labeled request message from whichever inputs were
@@ -286,6 +307,11 @@ async def orchestrate(request: OrchestrateRequest):
     input into clearly labeled sections; the actual routing decision is
     made by the orchestrator's own instruction, exactly as it is when
     test_orchestrator.py calls it directly.
+
+    MILESTONE 9 CHANGE: returns the validated OrchestratorOutput object
+    directly (FastAPI serializes it to JSON matching response_model) —
+    no more {"analysis": "..."} wrapper. The request format is
+    unchanged from Milestone 7B.
     """
     profile = (request.profile or "").strip()
     resume_text = (request.resume_text or "").strip()
@@ -327,18 +353,36 @@ async def orchestrate(request: OrchestrateRequest):
     )
 
     try:
-        analysis = await run_orchestrator_agent(user_request)
+        result = await run_orchestrator_agent(user_request)
     except RuntimeError as error:
         logger.error("orchestrator_agent returned no response: %s", error)
         raise HTTPException(
             status_code=502,
             detail="The orchestrator did not return a response. Please try again.",
         )
-    except Exception:
+    except ValueError as error:
+        logger.error("orchestrator_agent returned invalid structured output: %s", error)
+        raise HTTPException(
+            status_code=502,
+            detail="The orchestrator returned an unexpected response. Please try again.",
+        )
+    except Exception as exc:
         logger.exception("Unexpected error while running orchestrator_agent")
+        exc_str = str(exc)
+        exc_type = type(exc).__name__
+        if any(k in exc_str or k in exc_type for k in ["429", "RESOURCE_EXHAUSTED", "Quota", "Rate limit"]):
+            raise HTTPException(
+                status_code=429,
+                detail="The AI rate limit was reached. Please wait a few seconds and try again.",
+            )
+        if any(k in exc_str or k in exc_type for k in ["503", "UNAVAILABLE", "overloaded"]):
+            raise HTTPException(
+                status_code=503,
+                detail="The AI service is currently experiencing high demand. Please try again in a few seconds.",
+            )
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while processing your request. Please try again.",
         )
 
-    return OrchestrateResponse(analysis=analysis)
+    return result

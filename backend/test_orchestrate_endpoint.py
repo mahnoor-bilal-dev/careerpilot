@@ -1,5 +1,5 @@
 """
-CareerPilot — /orchestrate endpoint plumbing tests (Milestone 7B continued)
+CareerPilot — /orchestrate endpoint plumbing tests (Milestone 7B, updated Milestone 9)
 
 These tests verify FastAPI-level plumbing: validation, routing, and
 that the correctly-labeled user_request string reaches the orchestrator
@@ -12,7 +12,13 @@ calls it, using unittest.mock. This is legitimate for testing our own
 endpoint code (validation, request construction, routing, error
 mapping) without needing network access — it is NOT used to fabricate
 what looks like a genuine Gemini analysis. The mock always returns an
-obviously-fake placeholder string, never realistic-looking output.
+obviously-fake OrchestratorOutput with placeholder values, never
+realistic-looking output.
+
+MILESTONE 9 UPDATE: the mock now returns a real OrchestratorOutput
+object (not a plain string), and assertions check the response JSON's
+actual structured fields instead of an "analysis" key, matching the
+new response_model on POST /orchestrate.
 
 Run with: python test_orchestrate_endpoint.py
 """
@@ -20,15 +26,22 @@ Run with: python test_orchestrate_endpoint.py
 import os
 from unittest.mock import AsyncMock, patch
 
+# A key must exist in the environment before importing main (it calls
+# load_dotenv() then imports agent_runner, which imports the agent
+# modules, which read GEMINI_API_KEY at import time). We're not making
+# any real Gemini calls in this file, so a fake key is fine here.
 os.environ.setdefault("GEMINI_API_KEY", "fake-test-key-for-endpoint-tests")
 
 from fastapi.testclient import TestClient
 
 import main
+from schemas.orchestrator_schema import OrchestratorOutput
 
 client = TestClient(main.app)
 
-FAKE_ANALYSIS = "MOCKED-ORCHESTRATOR-OUTPUT-NOT-REAL-GEMINI-CONTENT"
+FAKE_ORCHESTRATOR_OUTPUT = OrchestratorOutput(
+    final_verdict="MOCKED-VERDICT-NOT-REAL-GEMINI-CONTENT",
+)
 
 
 def check(label, condition):
@@ -39,16 +52,17 @@ def check(label, condition):
 
 
 # --- 1. Resume-only request reaches /orchestrate ---
-with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYSIS)) as mock_run:
+with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ORCHESTRATOR_OUTPUT)) as mock_run:
     response = client.post("/orchestrate", json={"resume_text": "Experienced Python developer."})
     check("Resume-only request returns 200", response.status_code == 200)
-    check("Resume-only response contains analysis field", response.json().get("analysis") == FAKE_ANALYSIS)
+    check("Resume-only response contains final_verdict field", response.json().get("final_verdict") == "MOCKED-VERDICT-NOT-REAL-GEMINI-CONTENT")
+    check("Resume-only response is NOT wrapped in analysis key", "analysis" not in response.json())
     sent_request = mock_run.call_args.args[0]
     check("Resume-only user_request labeled correctly", "RESUME TEXT:" in sent_request)
     check("Resume-only user_request excludes other sections", "GITHUB USERNAME:" not in sent_request and "JOB DESCRIPTION:" not in sent_request)
 
 # --- 2. GitHub-only request reaches /orchestrate ---
-with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYSIS)) as mock_run:
+with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ORCHESTRATOR_OUTPUT)) as mock_run:
     response = client.post("/orchestrate", json={"github_username": "octocat"})
     check("GitHub-only request returns 200", response.status_code == 200)
     sent_request = mock_run.call_args.args[0]
@@ -56,7 +70,7 @@ with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYS
     check("GitHub-only user_request excludes other sections", "RESUME TEXT:" not in sent_request)
 
 # --- 3. Job-matching request reaches /orchestrate ---
-with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYSIS)) as mock_run:
+with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ORCHESTRATOR_OUTPUT)) as mock_run:
     response = client.post(
         "/orchestrate",
         json={
@@ -71,7 +85,7 @@ with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYS
     check("Job-matching user_request excludes GitHub/resume", "GITHUB USERNAME:" not in sent_request and "RESUME TEXT:" not in sent_request)
 
 # --- 4. Full assessment (profile + resume + GitHub + job) reaches /orchestrate ---
-with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYSIS)) as mock_run:
+with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ORCHESTRATOR_OUTPUT)) as mock_run:
     response = client.post(
         "/orchestrate",
         json={
@@ -88,6 +102,28 @@ with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=FAKE_ANALYS
         for label in ["CAREER PROFILE:", "RESUME TEXT:", "GITHUB USERNAME:", "JOB DESCRIPTION:"]
     ))
 
+# --- 4b. Structured response actually carries real field values through ---
+full_fake_output = OrchestratorOutput(
+    career_direction="UI/UX + Frontend Development",
+    strengths=["UI design", "React"],
+    skill_gaps=["Advanced React"],
+    job_match_score=78,
+    job_match_summary="Strong alignment with the role.",
+    github_summary="Active contributor.",
+    resume_summary="Solid resume.",
+    recommendations=["Build a TypeScript project", "Add tests"],
+    final_verdict="A strong candidate overall.",
+)
+with patch("main.run_orchestrator_agent", new=AsyncMock(return_value=full_fake_output)):
+    response = client.post(
+        "/orchestrate",
+        json={"profile": "test", "job_description": "test"},
+    )
+    body = response.json()
+    check("Full structured response has correct job_match_score", body.get("job_match_score") == 78)
+    check("Full structured response has correct recommendations list", body.get("recommendations") == ["Build a TypeScript project", "Add tests"])
+    check("Full structured response has correct career_direction", body.get("career_direction") == "UI/UX + Frontend Development")
+
 # --- 5. Empty request is rejected ---
 response = client.post("/orchestrate", json={})
 check("Fully empty request returns 400", response.status_code == 400)
@@ -95,6 +131,8 @@ check("Fully empty request returns 400", response.status_code == 400)
 response = client.post("/orchestrate", json={"profile": "   ", "job_description": ""})
 check("Whitespace-only fields correctly treated as empty (400)", response.status_code == 400)
 
+# Invalid GitHub username should also be rejected (reusing the SAME
+# pattern /analyze-github uses — not a duplicated regex).
 response = client.post("/orchestrate", json={"github_username": "has spaces"})
 check("Invalid GitHub username in /orchestrate rejected (400)", response.status_code == 400)
 
@@ -114,6 +152,8 @@ check("POST /analyze-github still rejects invalid username (400)", response.stat
 response = client.post("/analyze-job", json={"profile": "", "job_description": ""})
 check("POST /analyze-job still rejects empty fields (422)", response.status_code == 422)
 
+# Confirm the full route list is exactly what we expect — nothing lost,
+# nothing accidentally duplicated.
 route_paths = sorted(
     r.path for r in main.app.routes
     if hasattr(r, "path") and r.path.startswith(("/analyze", "/orchestrate", "/health")) or r.path == "/"

@@ -20,7 +20,7 @@ from schemas.resume_schema import ResumeOutput
 
 root_agent = Agent(
     name="resume_agent",
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     description=(
         "Analyzes extracted resume text and produces a structured "
         "breakdown of the candidate's background, skills, and areas "

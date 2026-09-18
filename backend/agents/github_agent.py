@@ -15,7 +15,7 @@ from tools.github_tool import get_github_profile
 
 root_agent = Agent(
     name="github_agent",
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     description=(
         "Analyzes a public GitHub user's profile and repositories to "
         "produce a career/portfolio-focused assessment."

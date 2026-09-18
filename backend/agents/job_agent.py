@@ -18,7 +18,7 @@ from schemas.job_schema import JobOutput
 
 root_agent = Agent(
     name="job_agent",
-    model="gemini-3.6-flash",
+    model="gemini-3.5-flash",
     description=(
         "Compares a user's career profile against a specific job "
         "description and produces a structured match assessment."

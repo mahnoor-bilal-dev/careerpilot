@@ -1,8 +1,18 @@
 /**
  * CareerPilot Mobile — Resume API client (Milestone 4, extended Milestone 8)
  *
- * Wraps the POST /analyze-resume multipart upload so App.tsx doesn't
- * need to know about FormData shapes or error-body parsing directly.
+ * Wraps the POST /analyze-resume and POST /extract-resume-text multipart
+ * uploads so callers don't need to know about FormData shapes or
+ * error-body parsing directly.
+ *
+ * IMPORTANT (fixed after the Expo SDK 57 upgrade): newer React Native
+ * versions changed how fetch/FormData validate file parts. The old
+ * shorthand object { uri, name, type } appended directly to FormData
+ * (which worked fine on RN 0.74 / Expo SDK 51) now throws "Unsupported
+ * FormDataPart implementation" on RN's newer networking stack. The fix
+ * is to fetch the local file:// URI ourselves first to get a real Blob,
+ * then append that Blob — this is the current recommended approach and
+ * works across RN versions, old and new.
  */
 
 import { API_BASE_URL } from "../config";
@@ -13,6 +23,34 @@ export interface PickedResumeFile {
   mimeType?: string;
 }
 
+/**
+ * Converts a picked file's local URI into a real Blob by fetching it
+ * (file:// URIs are readable via fetch on both iOS and Android). This
+ * Blob is what actually gets appended to FormData — not the old
+ * { uri, name, type } shorthand object, which newer RN versions reject.
+ */
+async function pickedFileToBlob(file: PickedResumeFile): Promise<Blob> {
+  const response = await fetch(file.uri);
+  const blob = await response.blob();
+
+  // If blob type is generic or missing, set explicit mimeType if specified or inferred from .pdf extension
+  const fallbackType =
+    file.mimeType ||
+    (file.name.toLowerCase().endsWith(".pdf")
+      ? "application/pdf"
+      : "application/octet-stream");
+
+  if (
+    !blob.type ||
+    blob.type === "application/octet-stream" ||
+    blob.type === "content/unknown"
+  ) {
+    return new Blob([blob], { type: fallbackType });
+  }
+
+  return blob;
+}
+
 interface AnalyzeResumeSuccessBody {
   analysis: string;
 }
@@ -21,18 +59,10 @@ interface AnalyzeResumeErrorBody {
   detail?: string | { msg?: string }[];
 }
 
-/**
- * Uploads a picked PDF file to the backend and returns the AI-generated
- * resume analysis text. Throws an Error with a readable message on
- * failure — the caller (App.tsx) is responsible for catching it.
- */
 export async function analyzeResume(file: PickedResumeFile): Promise<string> {
+  const blob = await pickedFileToBlob(file);
   const formData = new FormData();
-  formData.append("file", {
-    uri: file.uri,
-    name: file.name,
-    type: file.mimeType ?? "application/pdf",
-  } as unknown as Blob);
+  formData.append("file", blob, file.name);
 
   const response = await fetch(`${API_BASE_URL}/analyze-resume`, {
     method: "POST",
@@ -68,20 +98,10 @@ interface ExtractResumeTextErrorBody {
   detail?: string | { msg?: string }[];
 }
 
-/**
- * Milestone 8: uploads a picked PDF and returns just the raw extracted
- * text, WITHOUT running resume_agent. This is what the unified
- * assessment flow uses to obtain resume_text for POST /orchestrate —
- * analyzeResume() above returns an analysis, not the raw text, so it
- * can't be reused for that purpose.
- */
 export async function extractResumeText(file: PickedResumeFile): Promise<string> {
+  const blob = await pickedFileToBlob(file);
   const formData = new FormData();
-  formData.append("file", {
-    uri: file.uri,
-    name: file.name,
-    type: file.mimeType ?? "application/pdf",
-  } as unknown as Blob);
+  formData.append("file", blob, file.name);
 
   const response = await fetch(`${API_BASE_URL}/extract-resume-text`, {
     method: "POST",
