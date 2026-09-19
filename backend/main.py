@@ -370,7 +370,17 @@ async def orchestrate(request: OrchestrateRequest):
         logger.exception("Unexpected error while running orchestrator_agent")
         exc_str = str(exc)
         exc_type = type(exc).__name__
-        if any(k in exc_str or k in exc_type for k in ["429", "RESOURCE_EXHAUSTED", "Quota", "Rate limit"]):
+        if any(
+            k in exc_str or k in exc_type
+            for k in [
+                "429",
+                "RESOURCE_EXHAUSTED",
+                "ResourceExhausted",
+                "Quota",
+                "Rate limit",
+                "rate limit",
+            ]
+        ):
             raise HTTPException(
                 status_code=429,
                 detail="The AI rate limit was reached. Please wait a few seconds and try again.",

@@ -49,7 +49,7 @@ interface OrchestrateErrorBody {
   detail?: string | { msg?: string }[];
 }
 
-const ORCHESTRATE_TIMEOUT_MS = 120_000; // 120 seconds (2 minutes)
+const ORCHESTRATE_TIMEOUT_MS = 150_000; // 150 seconds (2.5 minutes)
 
 export async function analyzeCareerUnified(
   input: OrchestrateInput

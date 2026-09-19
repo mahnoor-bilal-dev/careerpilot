@@ -61,7 +61,11 @@ export default function ChatScreen() {
         ? JSON.stringify(career.result)
         : "No analysis has been run yet.";
 
-      const aiResponse = await sendChatMessage(text, context);
+      const aiResponse = await sendChatMessage({
+        message: text,
+        context: career.result,
+        profileText: career.buildProfileText(),
+      });
 
       const aiMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -254,18 +258,18 @@ const styles = StyleSheet.create({
   userBubble: {
     backgroundColor: colors.primary,
     alignSelf: "flex-end",
-    borderBottomRightRadius: radii.xs || 4,
+    borderBottomRightRadius: 4,
   },
   aiBubble: {
     backgroundColor: colors.bgCard,
     alignSelf: "flex-start",
-    borderBottomLeftRadius: radii.xs || 4,
+    borderBottomLeftRadius: 4,
   },
   aiLabel: {
     fontSize: 11,
     fontWeight: "700",
     color: colors.primary,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },

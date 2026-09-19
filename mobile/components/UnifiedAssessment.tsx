@@ -1,19 +1,13 @@
 /**
- * CareerPilot Mobile — Unified Career Assessment (Milestone 8, structured result UI Milestone 9)
- *
- * MILESTONE 9 CHANGE: the success state now renders separate cards per
- * section (Career Direction, Strengths, Skill Gaps, Job Match, GitHub,
- * Resume, Recommendations, Final Verdict) instead of one text blob.
- * Every optional card is conditionally rendered based on whether the
- * corresponding OrchestratorOutput field is present — a null/empty
- * field means that specialist didn't run, so its card simply isn't
- * shown. We do NOT parse any AI text here — every value rendered comes
- * directly from the already-typed OrchestratorOutput object.
+ * CareerPilot Mobile — Unified Career Assessment Engine
+ * Multi-source diagnostic tool (Profile, Resume, GitHub, Job Description).
+ * Connects directly to CareerContext & storage to generate actionable tasks.
  */
 
 import { useState } from "react";
 import {
   ActivityIndicator,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -24,27 +18,41 @@ import * as DocumentPicker from "expo-document-picker";
 
 import { analyzeCareerUnified, OrchestratorOutput } from "../api/orchestrateApi";
 import { extractResumeText, PickedResumeFile } from "../api/resumeApi";
+import { useCareer } from "../context/CareerContext";
 import {
   buildOrchestratePayload,
   hasAnyInput,
   UnifiedAssessmentInputs,
 } from "../utils/orchestratePayload";
+import { colors, spacing, radii } from "../theme";
 
 type AssessmentState = "idle" | "loading" | "success" | "error";
 type ResumeExtractState = "idle" | "extracting" | "ready" | "error";
 
-export default function UnifiedAssessment() {
-  const [profileText, setProfileText] = useState("");
-  const [jobDescription, setJobDescription] = useState("");
-  const [githubUsername, setGithubUsername] = useState("");
+interface Props {
+  onAssessmentCompleted?: () => void;
+}
 
+export default function UnifiedAssessment({ onAssessmentCompleted }: Props) {
+  const {
+    userProfile,
+    resumeText,
+    setResumeText,
+    githubUsername,
+    setGithubUsername,
+    jobDescription,
+    setJobDescription,
+    result,
+    processAiResult,
+    buildProfileText,
+  } = useCareer();
+
+  const [profileText, setProfileText] = useState(buildProfileText());
   const [selectedFile, setSelectedFile] = useState<PickedResumeFile | null>(null);
-  const [resumeText, setResumeText] = useState("");
   const [resumeExtractState, setResumeExtractState] = useState<ResumeExtractState>("idle");
   const [resumeExtractError, setResumeExtractError] = useState("");
 
   const [assessmentState, setAssessmentState] = useState<AssessmentState>("idle");
-  const [result, setResult] = useState<OrchestratorOutput | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
 
   const currentInputs: UnifiedAssessmentInputs = {
@@ -55,20 +63,19 @@ export default function UnifiedAssessment() {
   };
 
   async function handleSelectResumePress() {
-    const result = await DocumentPicker.getDocumentAsync({
+    const docResult = await DocumentPicker.getDocumentAsync({
       type: "application/pdf",
       copyToCacheDirectory: true,
     });
-    if (result.canceled) return;
+    if (docResult.canceled) return;
 
-    const picked = result.assets[0];
+    const picked = docResult.assets[0];
     const file: PickedResumeFile = {
       uri: picked.uri,
       name: picked.name,
       mimeType: picked.mimeType,
     };
     setSelectedFile(file);
-    setResumeText("");
     setResumeExtractError("");
     setResumeExtractState("extracting");
 
@@ -101,8 +108,14 @@ export default function UnifiedAssessment() {
     try {
       const payload = buildOrchestratePayload(currentInputs);
       const orchestratorResult = await analyzeCareerUnified(payload);
-      setResult(orchestratorResult);
+
+      // Process and save result + generate roadmap tasks
+      await processAiResult(orchestratorResult);
       setAssessmentState("success");
+
+      if (onAssessmentCompleted) {
+        onAssessmentCompleted();
+      }
     } catch (error) {
       setAssessmentState("error");
       setErrorMessage(
@@ -113,99 +126,102 @@ export default function UnifiedAssessment() {
     }
   }
 
-  const ctaDisabled =
-    assessmentState === "loading" || !hasAnyInput(currentInputs);
+  const ctaDisabled = assessmentState === "loading" || !hasAnyInput(currentInputs);
 
   return (
-    <View>
-      <Text style={styles.title}>CareerPilot</Text>
-      <Text style={styles.subtitle}>Your AI Career Assistant</Text>
-
-      <Text style={styles.hint}>
-        Fill in as much or as little as you'd like — CareerPilot will
-        figure out which analyses make sense.
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      <Text style={styles.title}>Unified AI Assessment</Text>
+      <Text style={styles.subtitle}>
+        Run deep evaluation across your profile, resume, GitHub, and target job description.
       </Text>
 
-      <Text style={styles.label}>Career Profile</Text>
-      <TextInput
-        style={styles.textInput}
-        placeholder="Tell us about yourself..."
-        placeholderTextColor="#64748B"
-        multiline
-        numberOfLines={4}
-        value={profileText}
-        onChangeText={setProfileText}
-        editable={assessmentState !== "loading"}
-      />
+      <Text style={styles.hint}>
+        Fill in any subset of fields below — the AI Orchestrator will automatically select the right specialist agents.
+      </Text>
 
-      <Text style={styles.label}>Resume</Text>
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={handleSelectResumePress}
-        disabled={assessmentState === "loading" || resumeExtractState === "extracting"}
-      >
-        <Text style={styles.secondaryButtonText}>
-          {selectedFile ? "Choose a Different Resume" : "Upload Resume"}
-        </Text>
-      </TouchableOpacity>
+      {/* Inputs Card */}
+      <View style={styles.card}>
+        <Text style={styles.label}>Career Profile & Goals</Text>
+        <TextInput
+          style={styles.textInput}
+          placeholder="Tell us about your background, skills, and goals..."
+          placeholderTextColor={colors.textDim}
+          multiline
+          numberOfLines={4}
+          value={profileText}
+          onChangeText={setProfileText}
+          editable={assessmentState !== "loading"}
+        />
 
-      {selectedFile && (
-        <View style={styles.resumeStatusRow}>
-          {resumeExtractState === "extracting" && (
-            <>
-              <ActivityIndicator size="small" color="#38BDF8" />
-              <Text style={styles.resumeStatusText}>Reading {selectedFile.name}...</Text>
-            </>
-          )}
-          {resumeExtractState === "ready" && (
-            <Text style={styles.resumeStatusTextSuccess}>
-              ✓ {selectedFile.name} ready
-            </Text>
-          )}
-          {resumeExtractState === "error" && (
-            <Text style={styles.resumeStatusTextError}>{resumeExtractError}</Text>
-          )}
-        </View>
-      )}
+        <Text style={styles.label}>Resume PDF</Text>
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={handleSelectResumePress}
+          disabled={assessmentState === "loading" || resumeExtractState === "extracting"}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.secondaryButtonText}>
+            {selectedFile ? `📄 ${selectedFile.name}` : "Upload Resume (PDF)"}
+          </Text>
+        </TouchableOpacity>
 
-      <Text style={styles.label}>GitHub</Text>
-      <TextInput
-        style={styles.usernameInput}
-        placeholder="username"
-        placeholderTextColor="#64748B"
-        autoCapitalize="none"
-        autoCorrect={false}
-        value={githubUsername}
-        onChangeText={setGithubUsername}
-        editable={assessmentState !== "loading"}
-      />
-
-      <Text style={styles.label}>Target Job</Text>
-      <TextInput
-        style={styles.textInput}
-        placeholder="Paste job description here..."
-        placeholderTextColor="#64748B"
-        multiline
-        numberOfLines={4}
-        value={jobDescription}
-        onChangeText={setJobDescription}
-        editable={assessmentState !== "loading"}
-      />
-
-      <TouchableOpacity
-        style={[styles.primaryButton, ctaDisabled && styles.buttonDisabled]}
-        onPress={handleAnalyzePress}
-        disabled={ctaDisabled}
-      >
-        {assessmentState === "loading" ? (
-          <>
-            <ActivityIndicator color="#0F172A" />
-            <Text style={styles.primaryButtonText}>Analyzing your career...</Text>
-          </>
-        ) : (
-          <Text style={styles.primaryButtonText}>✨ Analyze My Career</Text>
+        {selectedFile && (
+          <View style={styles.resumeStatusRow}>
+            {resumeExtractState === "extracting" && (
+              <>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={styles.resumeStatusText}>Reading PDF content...</Text>
+              </>
+            )}
+            {resumeExtractState === "ready" && (
+              <Text style={styles.resumeStatusTextSuccess}>✓ Resume text extracted</Text>
+            )}
+            {resumeExtractState === "error" && (
+              <Text style={styles.resumeStatusTextError}>{resumeExtractError}</Text>
+            )}
+          </View>
         )}
-      </TouchableOpacity>
+
+        <Text style={styles.label}>GitHub Username</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="e.g. octocat"
+          placeholderTextColor={colors.textDim}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={githubUsername}
+          onChangeText={setGithubUsername}
+          editable={assessmentState !== "loading"}
+        />
+
+        <Text style={styles.label}>Target Job Description</Text>
+        <TextInput
+          style={styles.textInput}
+          placeholder="Paste target job requirements here..."
+          placeholderTextColor={colors.textDim}
+          multiline
+          numberOfLines={4}
+          value={jobDescription}
+          onChangeText={setJobDescription}
+          editable={assessmentState !== "loading"}
+        />
+
+        <TouchableOpacity
+          style={[styles.primaryButton, ctaDisabled && styles.buttonDisabled]}
+          onPress={handleAnalyzePress}
+          disabled={ctaDisabled}
+          activeOpacity={0.8}
+        >
+          {assessmentState === "loading" ? (
+            <>
+              <ActivityIndicator color={colors.textOnPrimary} />
+              <Text style={styles.primaryButtonText}>Running AI Agents...</Text>
+            </>
+          ) : (
+            <Text style={styles.primaryButtonText}>✨ Analyze My Career</Text>
+          )}
+        </TouchableOpacity>
+      </View>
 
       {assessmentState === "error" && (
         <View style={styles.errorCard}>
@@ -216,38 +232,49 @@ export default function UnifiedAssessment() {
         </View>
       )}
 
-      {assessmentState === "success" && result && (
+      {/* Results View */}
+      {result && (
         <View style={styles.resultsContainer}>
-          <Text style={styles.resultsHeading}>Your Career Assessment</Text>
+          <View style={styles.successBanner}>
+            <Text style={styles.successBannerText}>
+              ✓ Assessment complete! Actionable tasks have been added to your Career Roadmap.
+            </Text>
+          </View>
+
+          <Text style={styles.resultsHeading}>ASSESSMENT RESULTS</Text>
 
           {result.career_direction && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Career Direction</Text>
+              <Text style={styles.cardTitle}>🧭 Career Direction</Text>
               <Text style={styles.cardBody}>{result.career_direction}</Text>
             </View>
           )}
 
           {result.strengths.length > 0 && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>💪 Strengths</Text>
+              <Text style={styles.cardTitle}>💪 Identified Strengths</Text>
               {result.strengths.map((item, index) => (
-                <Text key={index} style={styles.cardListItem}>• {item}</Text>
+                <Text key={index} style={styles.cardListItem}>
+                  • {item}
+                </Text>
               ))}
             </View>
           )}
 
           {result.skill_gaps.length > 0 && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>⚠️ Skill Gaps</Text>
+              <Text style={styles.cardTitle}>⚠️ Skill Gaps to Bridge</Text>
               {result.skill_gaps.map((item, index) => (
-                <Text key={index} style={styles.cardListItem}>• {item}</Text>
+                <Text key={index} style={styles.cardListItem}>
+                  • {item}
+                </Text>
               ))}
             </View>
           )}
 
           {result.job_match_score !== null && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>💼 Job Match</Text>
+              <Text style={styles.cardTitle}>🎯 Job Match Assessment</Text>
               <Text style={styles.scoreText}>{result.job_match_score}%</Text>
               {result.job_match_summary && (
                 <Text style={styles.cardBody}>{result.job_match_summary}</Text>
@@ -257,63 +284,124 @@ export default function UnifiedAssessment() {
 
           {result.github_summary && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>🐙 GitHub</Text>
+              <Text style={styles.cardTitle}>🐙 GitHub Portfolio Insights</Text>
               <Text style={styles.cardBody}>{result.github_summary}</Text>
             </View>
           )}
 
           {result.resume_summary && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>📄 Resume</Text>
+              <Text style={styles.cardTitle}>📄 Resume Analysis</Text>
               <Text style={styles.cardBody}>{result.resume_summary}</Text>
             </View>
           )}
 
           {result.recommendations.length > 0 && (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>🚀 Recommendations</Text>
+              <Text style={styles.cardTitle}>🚀 Key Action Items</Text>
               {result.recommendations.map((item, index) => (
-                <Text key={index} style={styles.cardListItem}>{index + 1}. {item}</Text>
+                <Text key={index} style={styles.cardListItem}>
+                  {index + 1}. {item}
+                </Text>
               ))}
             </View>
           )}
 
           <View style={[styles.card, styles.verdictCard]}>
-            <Text style={styles.cardTitle}>Final Verdict</Text>
+            <Text style={styles.cardTitle}>🏆 Final Verdict</Text>
             <Text style={styles.cardBody}>{result.final_verdict}</Text>
           </View>
         </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 34, fontWeight: "700", color: "#F8FAFC", marginBottom: 4 },
-  subtitle: { fontSize: 16, color: "#94A3B8", marginBottom: 16 },
-  hint: { fontSize: 13, color: "#64748B", marginBottom: 24, lineHeight: 18 },
-  label: { fontSize: 14, fontWeight: "600", color: "#CBD5E1", marginBottom: 8, marginTop: 16 },
-  textInput: { backgroundColor: "#1E293B", borderRadius: 12, padding: 16, fontSize: 15, color: "#F8FAFC", minHeight: 100, textAlignVertical: "top" },
-  usernameInput: { backgroundColor: "#1E293B", borderRadius: 12, padding: 16, fontSize: 15, color: "#F8FAFC" },
-  secondaryButton: { borderWidth: 1, borderColor: "#334155", borderRadius: 12, paddingVertical: 14, alignItems: "center", justifyContent: "center" },
-  secondaryButtonText: { color: "#E2E8F0", fontSize: 15, fontWeight: "600" },
-  resumeStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
-  resumeStatusText: { color: "#94A3B8", fontSize: 13 },
-  resumeStatusTextSuccess: { color: "#4ADE80", fontSize: 13 },
-  resumeStatusTextError: { color: "#F87171", fontSize: 13 },
-  primaryButton: { flexDirection: "row", gap: 10, backgroundColor: "#38BDF8", borderRadius: 12, paddingVertical: 18, alignItems: "center", justifyContent: "center", marginTop: 28 },
+  container: { flex: 1, backgroundColor: colors.bg },
+  scrollContent: { padding: spacing.screenPadding, paddingBottom: 48 },
+  title: { fontSize: 26, fontWeight: "800", color: colors.textPrimary, marginBottom: 4, marginTop: spacing.sm },
+  subtitle: { fontSize: 14, color: colors.textMuted, marginBottom: spacing.sm },
+  hint: { fontSize: 13, color: colors.textDim, marginBottom: spacing.lg, lineHeight: 18 },
+  card: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  label: { fontSize: 12, fontWeight: "700", color: colors.textDim, textTransform: "uppercase", marginBottom: spacing.xs, marginTop: spacing.sm },
+  textInput: {
+    backgroundColor: colors.bg,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    fontSize: 14,
+    color: colors.textPrimary,
+    minHeight: 80,
+    textAlignVertical: "top",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  input: {
+    backgroundColor: colors.bg,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    fontSize: 14,
+    color: colors.textPrimary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: colors.bg,
+  },
+  secondaryButtonText: { color: colors.textSecondary, fontSize: 14, fontWeight: "600" },
+  resumeStatusRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, marginTop: spacing.xs },
+  resumeStatusText: { color: colors.textMuted, fontSize: 12 },
+  resumeStatusTextSuccess: { color: colors.success, fontSize: 12, fontWeight: "600" },
+  resumeStatusTextError: { color: colors.error, fontSize: 12 },
+  primaryButton: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: radii.md,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: spacing.lg,
+  },
   buttonDisabled: { opacity: 0.5 },
-  primaryButtonText: { color: "#0F172A", fontSize: 16, fontWeight: "700" },
-  errorCard: { backgroundColor: "#1E293B", borderLeftWidth: 4, borderLeftColor: "#F87171", borderRadius: 8, padding: 16, marginTop: 20 },
-  errorText: { color: "#F87171", fontSize: 14, marginBottom: 12 },
-  retryButton: { alignSelf: "flex-start", backgroundColor: "#334155", borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16 },
-  retryButtonText: { color: "#F8FAFC", fontSize: 13, fontWeight: "600" },
-  resultsContainer: { marginTop: 24 },
-  resultsHeading: { fontSize: 13, fontWeight: "700", color: "#64748B", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 12 },
-  card: { backgroundColor: "#1E293B", borderRadius: 12, padding: 18, marginBottom: 12 },
-  verdictCard: { borderLeftWidth: 4, borderLeftColor: "#38BDF8" },
-  cardTitle: { fontSize: 14, fontWeight: "700", color: "#38BDF8", marginBottom: 10 },
-  cardBody: { fontSize: 15, color: "#E2E8F0", lineHeight: 22 },
-  cardListItem: { fontSize: 15, color: "#E2E8F0", lineHeight: 24 },
-  scoreText: { fontSize: 36, fontWeight: "800", color: "#F8FAFC", marginBottom: 6 },
+  primaryButtonText: { color: colors.textOnPrimary, fontSize: 15, fontWeight: "700" },
+  errorCard: {
+    backgroundColor: colors.bgCard,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.error,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+    marginTop: spacing.md,
+  },
+  errorText: { color: colors.error, fontSize: 13, marginBottom: spacing.sm },
+  retryButton: { alignSelf: "flex-start", backgroundColor: colors.bg, borderRadius: radii.sm, paddingVertical: 6, paddingHorizontal: 12 },
+  retryButtonText: { color: colors.textPrimary, fontSize: 12, fontWeight: "600" },
+  resultsContainer: { marginTop: spacing.lg },
+  successBanner: {
+    backgroundColor: "rgba(34, 197, 94, 0.15)",
+    borderWidth: 1,
+    borderColor: colors.success,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    marginBottom: spacing.lg,
+  },
+  successBannerText: { color: colors.success, fontSize: 13, fontWeight: "700", lineHeight: 18 },
+  resultsHeading: { fontSize: 12, fontWeight: "800", color: colors.textDim, letterSpacing: 1, marginBottom: spacing.md },
+  verdictCard: { borderLeftWidth: 4, borderLeftColor: colors.primary },
+  cardTitle: { fontSize: 14, fontWeight: "700", color: colors.primary, marginBottom: spacing.sm },
+  cardBody: { fontSize: 14, color: colors.textSecondary, lineHeight: 22 },
+  cardListItem: { fontSize: 14, color: colors.textSecondary, lineHeight: 22, marginBottom: 4 },
+  scoreText: { fontSize: 36, fontWeight: "800", color: colors.textPrimary, marginBottom: spacing.xs },
 });

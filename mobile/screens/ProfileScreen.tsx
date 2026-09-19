@@ -1,13 +1,11 @@
 /**
- * CareerPilot — Career Profile Screen
- *
- * Collects the user's basic career information: name, current role,
- * experience level, skills, and career goal. All fields are optional
- * (the user can skip and provide only a resume or GitHub instead).
+ * CareerPilot — Career Profile & Settings Screen
+ * Edit target role, skills, goal, objective, and manage local storage cache.
  */
 
 import { useState } from "react";
 import {
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,203 +13,180 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import type { RootStackParamList } from "../App";
-import { useCareer, CareerProfile, EMPTY_PROFILE } from "../context/CareerContext";
-import { colors, spacing, radii, shared } from "../theme";
+import { useCareer } from "../context/CareerContext";
+import { colors, spacing, radii } from "../theme";
 
-type Props = NativeStackScreenProps<RootStackParamList, "Profile">;
+export default function ProfileScreen() {
+  const { userProfile, updateUserProfile, resetAll } = useCareer();
 
-const EXPERIENCE_LEVELS = [
-  "Student",
-  "Junior (0-2 years)",
-  "Mid-Level (2-5 years)",
-  "Senior (5-10 years)",
-  "Lead / Staff (10+ years)",
-];
+  const [name, setName] = useState(userProfile.name);
+  const [targetRole, setTargetRole] = useState(userProfile.targetRole);
+  const [careerObjective, setCareerObjective] = useState(userProfile.careerObjective);
+  const [experienceLevel, setExperienceLevel] = useState(userProfile.experienceLevel);
+  const [skills, setSkills] = useState(userProfile.skills);
+  const [careerGoal, setCareerGoal] = useState(userProfile.careerGoal);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
-export default function ProfileScreen({ navigation }: Props) {
-  const career = useCareer();
-  const [local, setLocal] = useState<CareerProfile>({...career.profile});
-
-  function updateField(field: keyof CareerProfile, value: string) {
-    setLocal((prev) => ({ ...prev, [field]: value }));
+  async function handleSave() {
+    await updateUserProfile({
+      name: name.trim(),
+      targetRole: targetRole.trim(),
+      careerObjective: careerObjective.trim(),
+      experienceLevel,
+      skills: skills.trim(),
+      careerGoal: careerGoal.trim(),
+    });
+    setSavedMessage("Profile updated successfully!");
+    setTimeout(() => setSavedMessage(null), 3000);
   }
 
-  function handleContinue() {
-    career.setProfile(local);
-    navigation.navigate("Resume");
+  async function handleReset() {
+    Alert.alert(
+      "Reset App Data",
+      "Are you sure you want to clear your local tasks, projects, and analysis cache?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Everything",
+          style: "destructive",
+          onPress: async () => {
+            await resetAll();
+          },
+        },
+      ]
+    );
   }
-
-  function handleSkip() {
-    navigation.navigate("Resume");
-  }
-
-  const hasAnyInput = Object.values(local).some((v) => v.trim().length > 0);
 
   return (
-    <View style={shared.screen}>
-      <ScrollView
-        contentContainerStyle={shared.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.heading}>Career Profile</Text>
-        <Text style={styles.description}>
-          Tell us about yourself. All fields are optional — share as much
-          or as little as you'd like.
-        </Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      <Text style={styles.heading}>Profile & Settings</Text>
+      <Text style={styles.description}>Manage your target career goals and offline storage.</Text>
 
+      {savedMessage && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successText}>✓ {savedMessage}</Text>
+        </View>
+      )}
+
+      <View style={styles.card}>
         <Text style={styles.label}>Full Name</Text>
         <TextInput
-          style={shared.singleLineInput}
-          placeholder="Your name"
+          style={styles.input}
+          value={name}
+          onChangeText={setName}
+          placeholder="Your Name"
           placeholderTextColor={colors.textDim}
-          value={local.name}
-          onChangeText={(v) => updateField("name", v)}
         />
 
-        <Text style={styles.label}>Current Role</Text>
+        <Text style={styles.label}>Target Role</Text>
         <TextInput
-          style={shared.singleLineInput}
-          placeholder="e.g. Frontend Developer"
+          style={styles.input}
+          value={targetRole}
+          onChangeText={setTargetRole}
+          placeholder="e.g. Mobile Developer"
           placeholderTextColor={colors.textDim}
-          value={local.currentRole}
-          onChangeText={(v) => updateField("currentRole", v)}
+        />
+
+        <Text style={styles.label}>Career Objective</Text>
+        <TextInput
+          style={styles.input}
+          value={careerObjective}
+          onChangeText={setCareerObjective}
+          placeholder="e.g. Get my first job"
+          placeholderTextColor={colors.textDim}
         />
 
         <Text style={styles.label}>Experience Level</Text>
-        <View style={styles.chipRow}>
-          {EXPERIENCE_LEVELS.map((level) => (
-            <TouchableOpacity
-              key={level}
-              style={[
-                styles.chip,
-                local.experienceLevel === level && styles.chipSelected,
-              ]}
-              onPress={() => updateField("experienceLevel", level)}
-              activeOpacity={0.7}
-            >
-              <Text
-                style={[
-                  styles.chipText,
-                  local.experienceLevel === level && styles.chipTextSelected,
-                ]}
-              >
-                {level}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <Text style={styles.label}>Skills</Text>
         <TextInput
-          style={shared.textInput}
-          placeholder="e.g. React, TypeScript, Node.js, Python, UI/UX..."
+          style={styles.input}
+          value={experienceLevel}
+          onChangeText={setExperienceLevel}
+          placeholder="e.g. Student / Junior"
           placeholderTextColor={colors.textDim}
-          multiline
-          numberOfLines={3}
-          value={local.skills}
-          onChangeText={(v) => updateField("skills", v)}
         />
 
-        <Text style={styles.label}>Career Goal</Text>
+        <Text style={styles.label}>Key Skills</Text>
         <TextInput
-          style={shared.textInput}
-          placeholder="e.g. I want to become a senior frontend developer at a product company..."
+          style={styles.input}
+          value={skills}
+          onChangeText={setSkills}
+          placeholder="React Native, JavaScript, Python"
           placeholderTextColor={colors.textDim}
-          multiline
-          numberOfLines={3}
-          value={local.careerGoal}
-          onChangeText={(v) => updateField("careerGoal", v)}
         />
 
-        <View style={styles.buttonRow}>
-          <TouchableOpacity
-            style={styles.skipButton}
-            onPress={handleSkip}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.skipText}>Skip</Text>
-          </TouchableOpacity>
+        <Text style={styles.label}>Primary Goal</Text>
+        <TextInput
+          style={[styles.input, { height: 70 }]}
+          value={careerGoal}
+          onChangeText={setCareerGoal}
+          multiline
+          placeholder="Describe what you want to achieve..."
+          placeholderTextColor={colors.textDim}
+        />
 
-          <TouchableOpacity
-            style={[shared.primaryButton, styles.continueButton]}
-            onPress={handleContinue}
-            activeOpacity={0.8}
-          >
-            <Text style={shared.primaryButtonText}>Continue</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </View>
+        <TouchableOpacity style={styles.saveButton} onPress={handleSave} activeOpacity={0.8}>
+          <Text style={styles.saveButtonText}>Save Profile Changes</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.dangerCard}>
+        <Text style={styles.dangerTitle}>Storage & Cache Management</Text>
+        <Text style={styles.dangerText}>
+          CareerPilot stores all your tasks, projects, and analysis results locally on device using AsyncStorage.
+        </Text>
+
+        <TouchableOpacity style={styles.resetButton} onPress={handleReset} activeOpacity={0.8}>
+          <Text style={styles.resetButtonText}>Clear Storage & Reset App</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  heading: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: colors.textPrimary,
-    marginBottom: spacing.sm,
-  },
-  description: {
-    fontSize: 15,
-    color: colors.textMuted,
-    lineHeight: 22,
-    marginBottom: spacing.xxl,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.lg,
-  },
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm,
-  },
-  chip: {
+  container: { flex: 1, backgroundColor: colors.bg },
+  scrollContent: { padding: spacing.screenPadding, paddingBottom: 48 },
+  heading: { fontSize: 26, fontWeight: "800", color: colors.textPrimary, marginBottom: 4, marginTop: spacing.sm },
+  description: { fontSize: 14, color: colors.textMuted, marginBottom: spacing.xl },
+  successBanner: {
+    backgroundColor: "rgba(34, 197, 94, 0.15)",
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.full,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm + 2,
-  },
-  chipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  chipText: {
-    fontSize: 13,
-    color: colors.textMuted,
-    fontWeight: "500",
-  },
-  chipTextSelected: {
-    color: colors.textOnPrimary,
-    fontWeight: "600",
-  },
-  buttonRow: {
-    flexDirection: "row",
-    gap: spacing.md,
-    marginTop: spacing.xxxl,
-  },
-  skipButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.success,
+    padding: spacing.md,
     borderRadius: radii.md,
-    paddingVertical: 18,
-    alignItems: "center",
-    justifyContent: "center",
+    marginBottom: spacing.lg,
   },
-  skipText: {
-    color: colors.textMuted,
-    fontSize: 16,
-    fontWeight: "600",
+  successText: { color: colors.success, fontSize: 14, fontWeight: "700" },
+  card: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.xl,
   },
-  continueButton: {
-    flex: 2,
+  label: { fontSize: 12, fontWeight: "700", color: colors.textDim, textTransform: "uppercase", marginBottom: spacing.xs, marginTop: spacing.sm },
+  input: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    padding: 10,
+    color: colors.textPrimary,
+    fontSize: 14,
+    marginBottom: spacing.sm,
   },
+  saveButton: { backgroundColor: colors.primary, borderRadius: radii.md, paddingVertical: 12, alignItems: "center", marginTop: spacing.md },
+  saveButtonText: { color: colors.textOnPrimary, fontSize: 14, fontWeight: "700" },
+  dangerCard: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.3)",
+  },
+  dangerTitle: { fontSize: 15, fontWeight: "700", color: colors.error, marginBottom: spacing.xs },
+  dangerText: { fontSize: 13, color: colors.textMuted, lineHeight: 18, marginBottom: spacing.md },
+  resetButton: { borderWidth: 1, borderColor: colors.error, borderRadius: radii.md, paddingVertical: 12, alignItems: "center" },
+  resetButtonText: { color: colors.error, fontSize: 14, fontWeight: "700" },
 });

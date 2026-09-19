@@ -60,7 +60,7 @@ async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
     `input_text`, and return its final text response. Includes retry logic
     with backoff and smart delay parsing for 429 rate limits & 503 spikes.
     """
-    max_retries = 4
+    max_retries = 2
     last_exception = None
 
     for attempt in range(1, max_retries + 1):
@@ -113,7 +113,11 @@ async def _run_agent(agent: Agent, input_text: str, agent_label: str) -> str:
 
             if is_transient:
                 extracted_delay = _extract_retry_delay(exc_str)
-                sleep_sec = extracted_delay if extracted_delay is not None else (attempt * 5)
+                sleep_sec = (
+                    min(extracted_delay, 5.0)
+                    if extracted_delay is not None
+                    else min(attempt * 2.0, 4.0)
+                )
                 logger.warning(
                     "%s hit rate-limit/transient Gemini error on attempt %d/%d (%s). Waiting %.1fs before retry...",
                     agent_label,

@@ -105,7 +105,7 @@ export default function AnalysisScreen({ navigation }: Props) {
 
       // Brief pause to show completion before navigating
       setTimeout(() => {
-        navigation.replace("Results");
+        navigation.replace("Dashboard");
       }, 800);
     } catch (err) {
       clearInterval(stepInterval);
